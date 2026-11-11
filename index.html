@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bitta Katta Sahna — 4 Oynali Sinxron Animatsiya</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #050811;
+            font-family: system-ui, -apple-system, sans-serif;
+            color: #ffffff;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+        #hud {
+            position: fixed;
+            top: 14px;
+            left: 14px;
+            background: rgba(10, 15, 28, 0.85);
+            backdrop-filter: blur(10px);
+            padding: 14px 16px;
+            border-radius: 12px;
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            z-index: 100;
+            transition: opacity 0.3s ease;
+            max-width: 340px;
+        }
+        #hud.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .hud-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .hud-title {
+            font-size: 14px;
+            font-weight: 700;
+            color: #38bdf8;
+        }
+        .badge {
+            background: #0284c7;
+            color: #fff;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 999px;
+        }
+        .grid-selector {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+            margin-bottom: 10px;
+        }
+        button {
+            background: #1e293b;
+            color: #cbd5e1;
+            border: 1px solid #334155;
+            padding: 7px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 0.15s;
+        }
+        button:hover {
+            background: #334155;
+            color: #fff;
+        }
+        button.active {
+            background: #0284c7;
+            color: #ffffff;
+            border-color: #7dd3fc;
+            box-shadow: 0 0 12px rgba(2, 132, 199, 0.5);
+        }
+        .actions {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 8px;
+        }
+        .actions button {
+            flex: 1;
+        }
+        .hud-info {
+            font-size: 11px;
+            color: #94a3b8;
+            line-height: 1.45;
+        }
+        .hud-info b {
+            color: #e2e8f0;
+        }
+    </style>
+</head>
+<body>
+
+<div id="hud">
+    <div class="hud-header">
+        <span class="hud-title">Katta Sahna Qismi</span>
+        <span class="badge" id="active-badge">1-oyna</span>
+    </div>
+    <div class="grid-selector">
+        <button id="btn-0" onclick="setQuadrant(0)">1: Yuqori-Chap</button>
+        <button id="btn-1" onclick="setQuadrant(1)">2: Yuqori-O'ng</button>
+        <button id="btn-2" onclick="setQuadrant(2)">3: Pastki-Chap</button>
+        <button id="btn-3" onclick="setQuadrant(3)">4: Pastki-O'ng</button>
+    </div>
+    <div class="actions">
+        <button onclick="toggleFullScreen()">To'liq ekran (F)</button>
+        <button onclick="resetSync()">Qayta boshlash</button>
+    </div>
+    <div class="hud-info">
+        <b>Muhim:</b> 4 ta <u>alohida oyna</u> (tab emas, alohida oyna) oching va ularni ekranda 2×2 tartibda yonma-yon qo'ying.<br>
+        Tugmalar: <b>1–4</b> (qism tanlash) | <b>H</b> (menyuni yashirish)
+    </div>
+</div>
+
+<canvas id="scene"></canvas>
+
+<script>
+    const canvas = document.getElementById('scene');
+    const ctx = canvas.getContext('2d');
+    const hud = document.getElementById('hud');
+    const activeBadge = document.getElementById('active-badge');
+
+    // Har bir oyna uchun alohida sessiya identifikatori
+    let tabId = sessionStorage.getItem('big_scene_tab_id');
+    if (!tabId) {
+        tabId = 'win_' + Math.random().toString(36).substring(2, 10);
+        sessionStorage.setItem('big_scene_tab_id', tabId);
+    }
+
+    let currentQuadrant = parseInt(sessionStorage.getItem('big_scene_quadrant'));
+    const STORAGE_KEY = 'big_unified_scene_v2';
+
+    const QUADRANT_NAMES = [
+        "1: Yuqori-Chap",
+        "2: Yuqori-O'ng",
+        "3: Pastki-Chap",
+        "4: Pastki-O'ng"
+    ];
+
+    function getSyncState() {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+            try {
+                return JSON.parse(raw);
+            } catch (e) {}
+        }
+        const initial = {
+            startTime: Date.now(),
+            mouseX: 0.5,
+            mouseY: 0.5,
+            mouseActive: false,
+            tabs: {}
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
+        return initial;
+    }
+
+    function updateSyncState(updater) {
+        const state = getSyncState();
+        updater(state);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        return state;
+    }
+
+    function registerWindow() {
+        const now = Date.now();
+        updateSyncState(state => {
+            if (!state.tabs) state.tabs = {};
+            for (const id in state.tabs) {
+                if (now - state.tabs[id].lastSeen > 4000) {
+                    delete state.tabs[id];
+                }
+            }
+            if (isNaN(currentQuadrant) || currentQuadrant < 0 || currentQuadrant > 3) {
+                const used = new Set(Object.values(state.tabs).map(t => t.quadrant));
+                let assigned = 0;
+                for (let i = 0; i < 4; i++) {
+                    if (!used.has(i)) {
+                        assigned = i;
+                        break;
+                    }
+                }
+                currentQuadrant = assigned;
+                sessionStorage.setItem('big_scene_quadrant', currentQuadrant);
+            }
+            state.tabs[tabId] = {
+                quadrant: currentQuadrant,
+                lastSeen: now
+            };
+        });
+        updateUI();
+    }
+
+    function setQuadrant(q) {
+        currentQuadrant = q;
+        sessionStorage.setItem('big_scene_quadrant', q);
+        updateSyncState(state => {
+            if (!state.tabs) state.tabs = {};
+            state.tabs[tabId] = { quadrant: q, lastSeen: Date.now() };
+        });
+        updateUI();
+    }
+
+    function updateUI() {
+        for (let i = 0; i < 4; i++) {
+            const btn = document.getElementById('btn-' + i);
+            if (btn) btn.classList.toggle('active', currentQuadrant === i);
+        }
+        if (activeBadge && QUADRANT_NAMES[currentQuadrant]) {
+            activeBadge.textContent = QUADRANT_NAMES[currentQuadrant];
+        }
+    }
+
+    function resetSync() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            startTime: Date.now(),
+            mouseX: 0.5,
+            mouseY: 0.5,
+            mouseActive: false,
+            tabs: {
+                [tabId]: { quadrant: currentQuadrant, lastSeen: Date.now() }
+            }
+        }));
+    }
+
+    function toggleFullScreen() {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(() => {});
+        } else if (document.exitFullscreen) {
+            document.exitFullscreen();
+        }
+    }
+
+    window.addEventListener('keydown', (e) => {
+        if (['1', '2', '3', '4'].includes(e.key)) {
+            setQuadrant(parseInt(e.key) - 1);
+        } else if (e.key.toLowerCase() === 'f') {
+            toggleFullScreen();
+        } else if (e.key.toLowerCase() === 'h') {
+            hud.classList.toggle('hidden');
+        }
+    });
+
+    // Sichqoncha pozitsiyasini butun 2x2 katta sahna koordinatasiga aylantirish
+    window.addEventListener('mousemove', (e) => {
+        const localX = e.clientX / window.innerWidth;
+        const localY = e.clientY / window.innerHeight;
+        const col = currentQuadrant % 2;
+        const row = Math.floor(currentQuadrant / 2);
+
+        updateSyncState(state => {
+            state.mouseX = (col + localX) / 2;
+            state.mouseY = (row + localY) / 2;
+            state.mouseActive = true;
+        });
+    });
+
+    setInterval(registerWindow, 1200);
+    registerWindow();
+
+    // Barcha oynalarda 100% bir xil generatsiya qilinadigan yulduzlar
+    const stars = [];
+    for (let i = 0; i < 220; i++) {
+        const s1 = Math.sin(i * 19.19) * 43758.5453;
+        const s2 = Math.sin(i * 47.73) * 43758.5453;
+        const s3 = Math.sin(i * 91.17) * 43758.5453;
+        stars.push({
+            nx: s1 - Math.floor(s1),
+            ny: s2 - Math.floor(s2),
+            size: 1 + (s3 - Math.floor(s3)) * 2.5,
+            speed: 0.5 + (s1 - Math.floor(s1)) * 2
+        });
+    }
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    function render() {
+        const state = getSyncState();
+        const t = (Date.now() - state.startTime) / 1000;
+
+        const w = canvas.width;
+        const h = canvas.height;
+
+        // BUTUN KATTA SAHNA O'LCHAMI (4 ta oyna yig'indisi: 2x kenglik va 2x balandlik)
+        const sceneW = w * 2;
+        const sceneH = h * 2;
+
+        const col = currentQuadrant % 2;       // 0 = chap, 1 = o'ng
+        const row = Math.floor(currentQuadrant / 2); // 0 = yuqori, 1 = pastki
+
+        ctx.save();
+        // Kamerani faqat ushbu oynaga tegishli chorak qismga siljitish
+        ctx.translate(-col * w, -row * h);
+
+        // 1. Katta sahnaning umumiy foni
+        const bg = ctx.createRadialGradient(
+            sceneW * 0.5, sceneH * 0.5, 40,
+            sceneW * 0.5, sceneH * 0.5, Math.max(sceneW, sceneH) * 0.75
+        );
+        bg.addColorStop(0, '#101d36');
+        bg.addColorStop(0.55, '#080e1c');
+        bg.addColorStop(1, '#03060c');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, sceneW, sceneH);
+
+        // 2. Umumiy yulduzlar maydoni
+        for (let i = 0; i < stars.length; i++) {
+            const st = stars[i];
+            const sx = st.nx * sceneW;
+            const sy = st.ny * sceneH;
+            const alpha = 0.25 + 0.65 * Math.abs(Math.sin(t * st.speed + i));
+            ctx.fillStyle = `rgba(226, 232, 240, ${alpha})`;
+            ctx.beginPath();
+            ctx.arc(sx, sy, st.size, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // 3. Butun sahna markazidagi ulkan Quyosh/Yadro (4 ta oynaning o'rtasida turadi: 1-oynada pastki-o'ngi, 2-oynada pastki-chapi, 3-oynada yuqori-o'ngi, 4-oynada yuqori-chapi ko'rinadi)
+        const sunX = sceneW * 0.5;
+        const sunY = sceneH * 0.5;
+        const minDim = Math.min(sceneW, sceneH);
+
+        // Quyosh nurlari va halqasi
+        const sunGlow = ctx.createRadialGradient(sunX, sunY, 10, sunX, sunY, minDim * 0.22);
+        sunGlow.addColorStop(0, '#ffffff');
+        sunGlow.addColorStop(0.2, '#fde047');
+        sunGlow.addColorStop(0.5, 'rgba(249, 115, 22, 0.45)');
+        sunGlow.addColorStop(1, 'rgba(249, 115, 22, 0)');
+        ctx.fillStyle = sunGlow;
+        ctx.beginPath();
+        ctx.arc(sunX, sunY, minDim * 0.22, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Markaziy yadro shar
+        ctx.fillStyle = '#fef08a';
+        ctx.beginPath();
+        ctx.arc(sunX, sunY, minDim * 0.055, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 4. Katta orbitalar (4 ta oynaning barchasidan kesib o'tadi)
+        const orbits = [
+            { r: minDim * 0.16, speed: 0.85, size: 16, color: '#38bdf8', moons: 1 },
+            { r: minDim * 0.27, speed: -0.55, size: 24, color: '#a855f7', moons: 2 },
+            { r: minDim * 0.39, speed: 0.38, size: 30, color: '#10b981', moons: 2 }
+        ];
+
+        orbits.forEach((orb, idx) => {
+            // Orbita chizig'i
+            ctx.beginPath();
+            ctx.arc(sunX, sunY, orb.r, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(148, 163, 184, 0.18)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Sayyora koordinatasi (bir oynadan chiqib, qo'shni oynaga o'tib yuradi)
+            const angle = t * orb.speed + idx * 2.1;
+            const px = sunX + Math.cos(angle) * orb.r;
+            const py = sunY + Math.sin(angle) * orb.r;
+
+            // Sayyora nuri
+            const pGlow = ctx.createRadialGradient(px, py, 2, px, py, orb.size * 2.4);
+            pGlow.addColorStop(0, orb.color);
+            pGlow.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = pGlow;
+            ctx.beginPath();
+            ctx.arc(px, py, orb.size * 2.4, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Sayyora tanasi
+            ctx.fillStyle = orb.color;
+            ctx.beginPath();
+            ctx.arc(px, py, orb.size, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Yo'ldoshlari
+            for (let m = 0; m < orb.moons; m++) {
+                const mAngle = t * 2.8 * (m % 2 === 0 ? 1 : -1) + m * Math.PI;
+                const mx = px + Math.cos(mAngle) * (orb.size + 18);
+                const my = py + Math.sin(mAngle) * (orb.size + 18);
+                ctx.fillStyle = '#e2e8f0';
+                ctx.beginPath();
+                ctx.arc(mx, my, 5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        });
+
+        // 5. To'rtala oynani aylanib uchib yuruvchi kometa (8-shaklidagi katta trayektoriya)
+        const cometAngle = t * 0.7;
+        const cometX = sunX + Math.sin(cometAngle) * (sceneW * 0.38);
+        const cometY = sunY + Math.sin(cometAngle * 2) * (sceneH * 0.34);
+
+        // Kometa dumi
+        for (let k = 18; k >= 0; k--) {
+            const pastAngle = cometAngle - k * 0.035;
+            const tx = sunX + Math.sin(pastAngle) * (sceneW * 0.38);
+            const ty = sunY + Math.sin(pastAngle * 2) * (sceneH * 0.34);
+            const ratio = 1 - k / 19;
+            ctx.fillStyle = `rgba(56, 189, 248, ${ratio * 0.6})`;
+            ctx.beginPath();
+            ctx.arc(tx, ty, ratio * 16, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(cometX, cometY, 12, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 6. Sichqoncha lazeri (qaysi oynada sichqoncha harakatlansa, o'sha joyga umumiy markazdan nur tortiladi)
+        if (state.mouseActive) {
+            const mx = state.mouseX * sceneW;
+            const my = state.mouseY * sceneH;
+
+            ctx.beginPath();
+            ctx.moveTo(sunX, sunY);
+            ctx.lineTo(mx, my);
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(mx, my, 22 + Math.sin(t * 8) * 5, 0, Math.PI * 2);
+            ctx.strokeStyle = '#38bdf8';
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
+        }
+
+        // 7. Katta sahnaning 4 ga bo'linish chegarasi va katta raqamlar (fon sifatida juda xira)
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([12, 12]);
+        ctx.beginPath();
+        ctx.moveTo(w, 0);
+        ctx.lineTo(w, sceneH);
+        ctx.moveTo(0, h);
+        ctx.lineTo(sceneW, h);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.restore();
+        requestAnimationFrame(render);
+    }
+
+    requestAnimationFrame(render);
+</script>
+</body>
+</html>
